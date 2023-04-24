@@ -1,0 +1,124 @@
+# regression analysis
+
+## Imput Library
+```{r}
+library(tidyverse)
+library(stargazer)
+library(lfe)
+```
+
+read data
+```{r}
+df <- read_csv("FinalDatav1.csv")
+df <- df %>% select(-c(`...1`, `Trip Start Timestamp`, `Trip End Timestamp`, `Pickup Census Tract`, `Dropoff Census Tract`, 
+                 `Trip Start UTC`, `Trip Start Chicago`, `Trip End UTC`, `Trip End Chicago`))
+colnames(df)
+```
+
+```{r}
+df$preCovid = ifelse(df$Date2 < as.Date("2020-03-06"), 1, 0)
+df$periCovid = ifelse(df$Date2 >= as.Date("2020-03-06") & df$Date2 < as.Date("2020-07-01"), 1, 0)
+df$postCovid = ifelse(df$Date2 >= as.Date("2020-07-01"), 1, 0)
+```
+
+```{r}
+df$income <- ifelse(is.na(df$IncomeDropoff), df$IncomePickup, 
+                    ifelse(is.na(df$IncomePickup), df$IncomeDropoff,
+                           (df$IncomeDropoff + df$IncomePickup) / 2))
+
+df$income_rank <- cut(df$income, breaks = c(quantile(df$income, 0, na.rm = T), quantile(df$income, 0.5, na.rm = T), quantile(df$income, 1, na.rm = T)), labels = c(0, 1), include.lowest = TRUE)
+
+df$income_rank <- as.numeric(df$income_rank)
+
+sum(is.na(df$income_rank) / 2993711)
+
+quantile(df$income, 0.25, na.rm = T)
+```
+
+```{r}
+dailyCounts <- df %>%
+  group_by(Date2, income_rank) %>%
+  summarise(countsDaily = n())
+
+df <- merge(df, dailyCounts, by = c('Date2', 'income_rank'), all.x = T)
+```
+
+
+```{r}
+df$pop <- ifelse(is.na(df$PopDropoff), df$PopPickup, 
+                    ifelse(is.na(df$PopPickup), df$PopDropoff,
+                           (df$PopDropoff + df$PopPickup) / 2))
+df$countsPC = (df$countsDaily / df$pop)
+```
+
+
+```{r}
+# regession 1 for all
+layan11 = lm(Tip ~ Fare+`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ 
+                  `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ 
+                  `snowfall (cm)`+ income_rank + traffic_condition + weekday, data = df)
+
+# for high tips trips
+layan12 = lm(Tip ~ Fare+`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ 
+                  `temperature_2m (°C)`+`relativehumidity_2m (%)`+ `rain (mm)`+ 
+                  `snowfall (cm)`+ income_rank + traffic_condition + weekday, data = df[df$Tipped == T,])
+
+layan2 = lm(Tip_percent_PerRide ~ `Trip Seconds`+`Trip Miles`+Fare+`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ 
+                  `temperature_2m (°C)`+`relativehumidity_2m (%)`+`precipitation (mm)` + `rain (mm)`+ 
+                  `snowfall (cm)`+ income_rank + traffic_condition + weekday, data = df)
+
+stargazer(layan11, layan2, type = 'text')
+```
+
+
+```{r}
+layan31 = lm(Tip ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank + weekday
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)`, data = df)
+
+# for high tips trips
+layan32 = lm(Tip ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank + weekday
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)`, data = df[df$Tipped == T,])
+
+layan41 = lm(Tip_percent_PerRide ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank + weekday
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)`, data = df)
+
+# for high tips trips
+layan42 = lm(Tip_percent_PerRide ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank + weekday
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)`, data = df[df$Tipped == T,])
+
+stargazer(layan31, layan32, layan41, layan42, type = 'text', column.labels = c('All Trips','Tipped Trips', 'All Trips','Tipped Trips'))
+
+```
+```{r}
+layan311 = felm(Tip ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)` |weekday | 0 | weekday, data = df)
+
+# for high tips trips
+layan321 = felm(Tip ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)`|weekday | 0 | weekday, data = df[df$Tipped == T,])
+
+layan411 = felm(Tip_percent_PerRide ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)`|weekday | 0 | weekday, data = df)
+
+# for high tips trips
+layan421 = felm(Tip_percent_PerRide ~ Fare +`Shared Trip Authorized` + `Hour`+ `temperature_2m (°C)` * `Trips Pooled` 
+                  +`relativehumidity_2m (%)` + `rain (mm)` * `Trips Pooled`+ `snowfall (cm)`+ income_rank
+                  + traffic_condition * `temperature_2m (°C)` + traffic_condition * `rain (mm)`|weekday | 0 | weekday, data = df[df$Tipped == T,])
+
+stargazer(layan311, layan321, layan411, layan421, type = 'latex', column.labels = c('All Trips','Tipped Trips', 'All Trips','Tipped Trips'),
+          covariate.labels = c("Fare", "Shared Trip Authorized", "Hour", "Temperature", "Trips Pooled", "Relative Humidity", "Rain",
+                                "Snowfall", "Income", "Traffic Condition", "Temperature * Trips Pooled", "Rain * Trips Pooled", 
+                               "Temperature * Traffic Condition", "Rain * Traffic Condition"),
+          dep.var.labels   = c("Tip", "Tipping Percentage Per Ride"), 
+          add.lines = list(c("Income Fixed effects", "Y", "Y", "Y", "Y"),
+                           c("Traffic Fixed effects", "Y", "Y", "Y", "Y")),
+          title = "The Coefficients of Weather Attributes on Tipping Percentage Per Ride/Daily Number of Trips Per Capita", out = 'layan.tex')
+
+```
