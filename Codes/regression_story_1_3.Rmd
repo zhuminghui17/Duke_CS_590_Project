@@ -1,0 +1,110 @@
+# regression analysis
+
+## Imput Library
+```{r}
+library(tidyverse)
+library(stargazer)
+library(lfe)
+```
+
+read data
+```{r}
+df <- read_csv("FinalDatav1.csv")
+df <- df %>% select(-c(`...1`, `Trip Start Timestamp`, `Trip End Timestamp`, `Pickup Census Tract`, `Dropoff Census Tract`, 
+                 `Trip Start UTC`, `Trip Start Chicago`, `Trip End UTC`, `Trip End Chicago`))
+colnames(df)
+```
+
+```{r}
+df$preCovid = ifelse(df$Date2 < as.Date("2020-03-01"), 1, 0)
+df$periCovid = ifelse(df$Date2 >= as.Date("2020-03-01") & df$Date2 < as.Date("2020-12-31"), 1, 0)
+df$postCovid = ifelse(df$Date2 >= as.Date("2021-01-01"), 1, 0)
+```
+
+```{r}
+df$income <- ifelse(is.na(df$IncomeDropoff), df$IncomePickup, 
+                    ifelse(is.na(df$IncomePickup), df$IncomeDropoff,
+                           (df$IncomeDropoff + df$IncomePickup) / 2))
+
+df$income_rank1 <- cut(df$income, breaks = c(quantile(df$income, 0, na.rm = T), quantile(df$income, 0.5, na.rm = T), quantile(df$income, 1, na.rm = T)), labels = c(0, 1), include.lowest = TRUE)
+
+df$income_rank2 <- cut(df$income, breaks = c(quantile(df$income, 0, na.rm = T), quantile(df$income, 0.25, na.rm = T), quantile(df$income, 0.50, na.rm = T), quantile(df$income, 0.75, na.rm = T), quantile(df$income, 1, na.rm = T)), labels = c(1,2,3,4), include.lowest = TRUE)
+
+df$income_rank1 <- as.numeric(df$income_rank1)
+df$income_rank2 <- as.numeric(df$income_rank2)
+
+sum(is.na(df$income_rank2) / 2993711)
+
+quantile(df$income_rank2, 0.76, na.rm = T)
+```
+
+```{r}
+dailyCounts1 <- df %>%
+  group_by(Date2, income_rank1) %>%
+  summarise(countsDaily1 = n())
+
+dailyCounts2 <- df %>%
+  group_by(Date2, income_rank2) %>%
+  summarise(countsDaily2 = n())
+
+df <- merge(df, dailyCounts1, by = c('Date2', 'income_rank1'), all.x = T)
+df <- merge(df, dailyCounts2, by = c('Date2', 'income_rank2'), all.x = T)
+```
+
+
+```{r}
+df$pop <- ifelse(is.na(df$PopDropoff), df$PopPickup, 
+                    ifelse(is.na(df$PopPickup), df$PopDropoff,
+                           (df$PopDropoff + df$PopPickup) / 2))
+df$countsPC1 = (df$countsDaily1 / df$pop)
+df$countsPC2 = (df$countsDaily2 / df$pop)
+```
+
+
+
+Minghui's models
+
+
+```{r}
+mod11 <- felm(Tip_percent_PerRide ~ Fare +`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ 
+                  `snowfall (cm)` + traffic_condition + weekday + periCovid | income_rank1 | 0 | income_rank1, data = df[df$postCovid != 1,])
+mod12 <- felm(countsPC1 ~ Fare +`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ 
+                  `snowfall (cm)`+ traffic_condition + weekday + periCovid | income_rank1  | 0 | income_rank1, data = df[df$postCovid != 1,])
+
+mod13 <- felm(Tip_percent_PerRide ~ Fare +`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ 
+                  `snowfall (cm)`+  traffic_condition + weekday + postCovid | income_rank1| 0 | income_rank1, data = df[df$periCovid != 1,])
+mod14 <- felm(countsPC1  ~ Fare +`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ 
+                  `snowfall (cm)`+  traffic_condition + weekday + postCovid | income_rank1 | 0 | income_rank1, data = df[df$periCovid != 1,])
+
+stargazer(mod11, mod12, mod13, mod14, type = 'text')
+```
+
+```{r}
+mod21 <- felm(countsPC ~ Fare +`Shared Trip Authorized`+`Trips Pooled`+ `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ `snowfall (cm)` 
+              + income_rank2 * postCovid | Hour + traffic_condition + weekday | 0| weekday+traffic_condition, data = df %>% filter(preCovid != 1))
+
+mod22 <-felm(log(countsPC+1) ~ Fare +`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ `snowfall (cm)` + traffic_condition + weekday +income_rank, data = df %>% filter(prCovid == 1 ))
+
+mod23 <- felm(log(countsPC+1) ~ Fare +`Shared Trip Authorized`+`Trips Pooled` + `Hour`+ `temperature_2m (°C)`+`relativehumidity_2m (%)` + `rain (mm)`+ `snowfall (cm)` + traffic_condition + weekday +income_rank, data = df %>% filter(periCovid == 1))
+
+stargazer( mod21, type = 'text')
+
+stargazer( mod21, mod22, mod23, type = 'text')
+```
+
+
+```{r}
+ggplot(data = df, aes(x =Date2, y = countsPC, color = factor(income_rank2))) +
+  geom_smooth(aes(group = factor(income_rank2)))
+
+
+count(df[df$income_rank == 3,]) / 2993711
+```
+
+
+
+
+```{r}
+ggplot(data = df, aes(x =Date2, y = countsDaily, color = factor(income_rank))) +
+  geom_smooth(aes(group = factor(income_rank)))
+```
